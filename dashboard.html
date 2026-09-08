@@ -1,0 +1,7 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>价格守望</title><link rel="stylesheet" href="dashboard.css"></head><body>
+<aside><div class="brand"><span>¥</span><div><b>价格守望</b><small>Price Watch</small></div></div><nav><a class="active">监听列表</a><a id="add-watch">＋ 添加新监听</a></nav><div class="aside-note"><b>自动检查已开启</b><span>每 1 小时更新一次价格</span></div></aside>
+<div class="page"><header><div><h1>价格监听</h1><p>集中查看商品价格与提醒状态</p></div><button id="refresh" class="primary">↻&nbsp; 刷新全部</button></header><main>
+  <section class="stats"><article><span class="stat-icon green">◎</span><div><small>监听商品</small><strong id="total">0</strong></div></article><article><span class="stat-icon gold">↓</span><div><small>已达目标价</small><strong id="hits">0</strong></div></article><article><span class="stat-icon blue">↻</span><div><small>最近检查</small><strong id="updated">—</strong></div></article></section>
+  <section class="section-head"><div><h2>全部监听</h2><p id="subtitle">共 0 个商品</p></div></section><div id="list" class="list"></div>
+  <section id="empty" class="empty" hidden><span>⌁</span><h2>开始你的第一个价格监听</h2><p>打开商品页面，通过插件菜单选择“添加价格监听”。</p><button id="empty-add" class="primary">了解如何添加</button></section>
+</main></div><div id="toast" class="toast" hidden></div><script src="dashboard.js"></script></body></html>

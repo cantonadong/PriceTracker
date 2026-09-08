@@ -1,0 +1,18 @@
+{
+  "manifest_version": 3,
+  "minimum_chrome_version": "116",
+  "name": "价格守望",
+  "version": "1.0.0",
+  "description": "选择网页上的价格，按小时检查并在降到目标价时提醒。",
+  "permissions": ["storage", "alarms", "tabs", "scripting", "offscreen", "notifications"],
+  "host_permissions": ["<all_urls>"],
+  "background": { "service_worker": "background.js", "type": "module" },
+  "action": { "default_title": "价格守望", "default_popup": "popup.html" },
+  "options_page": "dashboard.html",
+  "content_scripts": [{
+    "matches": ["<all_urls>"],
+    "js": ["content.js"],
+    "css": ["content.css"],
+    "run_at": "document_idle"
+  }]
+}
