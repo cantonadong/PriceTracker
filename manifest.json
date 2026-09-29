@@ -4,10 +4,11 @@
   "name": "价格守望",
   "version": "1.0.0",
   "description": "选择网页上的价格，按小时检查并在降到目标价时提醒。",
-  "permissions": ["storage", "alarms", "tabs", "scripting", "offscreen", "notifications"],
+  "permissions": ["storage", "alarms", "tabs", "scripting", "offscreen", "notifications", "favicon"],
   "host_permissions": ["<all_urls>"],
   "background": { "service_worker": "background.js", "type": "module" },
-  "action": { "default_title": "价格守望", "default_popup": "popup.html" },
+  "icons": { "16": "icon.png", "32": "icon.png", "48": "icon.png", "128": "icon.png" },
+  "action": { "default_title": "价格守望", "default_popup": "popup.html", "default_icon": { "16": "icon.png", "32": "icon.png", "48": "icon.png", "128": "icon.png" } },
   "options_page": "dashboard.html",
   "content_scripts": [{
     "matches": ["<all_urls>"],
