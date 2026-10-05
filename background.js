@@ -1,7 +1,14 @@
 import "./price-reader.js";
+import "./watch-state.js";
+import * as watchStore from "./watch-store.js";
 const ALARM = "price-watch-hourly";
 const OFFSCREEN_URL = "offscreen.html";
 let refreshQueue = Promise.resolve();
+watchStore.initialize().catch(reportBackgroundError);
+
+function reportBackgroundError(error) {
+  console.error("价格守望：", error);
+}
 
 function queueRefresh(task) {
   const result = refreshQueue.then(task);
@@ -9,25 +16,24 @@ function queueRefresh(task) {
   return result;
 }
 
-chrome.runtime.onInstalled.addListener(async () => {
-  await chrome.alarms.create(ALARM, { delayInMinutes: 1, periodInMinutes: 60 });
+async function restoreBackground(firstInstall = false) {
+  await chrome.alarms.create(ALARM, { ...(firstInstall ? { delayInMinutes: 1 } : {}), periodInMinutes: 60 });
+  await watchStore.initialize();
+  await watchStore.flushSync();
   await updateBadge();
-});
-
-chrome.runtime.onStartup.addListener(async () => {
-  await chrome.alarms.create(ALARM, { periodInMinutes: 60 });
-  await updateBadge();
-});
+}
+chrome.runtime.onInstalled.addListener(() => restoreBackground(true).catch(reportBackgroundError));
+chrome.runtime.onStartup.addListener(() => restoreBackground().catch(reportBackgroundError));
 
 chrome.alarms.onAlarm.addListener(alarm => {
-  if (alarm.name === ALARM) refreshAll();
+  if (alarm.name === ALARM) refreshAll().catch(reportBackgroundError);
 });
 
 chrome.action.onClicked.addListener(async tab => {
   if (!tab.id || !/^https?:/i.test(tab.url || "")) return openDashboard();
-  const { watches = [] } = await chrome.storage.local.get("watches");
+  const watches = await watchStore.getWatches();
   const alreadyWatched = watches.some(w => w.url === normalizeUrl(tab.url));
-  const hasAlerts = watches.some(w => w.triggered);
+  const hasAlerts = watches.some(w => WatchState.isTriggered(w));
   if (alreadyWatched || hasAlerts) return openDashboard();
   await startPicker(tab.id);
 });
@@ -44,10 +50,24 @@ async function startPicker(tabId) {
 
 chrome.notifications.onClicked.addListener(() => openDashboard());
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === "local" && changes.watches) updateBadge(changes.watches.newValue || []);
+  if (area === "local" && changes.watches) updateBadge(changes.watches.newValue || []).catch(reportBackgroundError);
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  // All persistent configuration edits go through the worker's serial store.
+  const storeMessages = {
+    WATCH_READY: () => watchStore.initialize().then(() => ({ ok: true })),
+    WATCH_PATCH: () => watchStore.patchWatch(message.id, message.patch).then(saved => ({ ok: true, saved })),
+    WATCH_DELETE: () => watchStore.deleteWatch(message.id).then(removed => ({ ok: true, removed })),
+    WATCH_ORDER: () => watchStore.setOrder(message.ids).then(() => ({ ok: true })),
+    WATCH_SORT: () => watchStore.sortByPrice().then(() => ({ ok: true })),
+    WATCH_EXPORT: () => watchStore.exportBackup().then(backup => ({ ok: true, backup })),
+    WATCH_IMPORT: () => watchStore.importBackup(message.backup).then(result => ({ ok: true, ...result }))
+  };
+  if (Object.hasOwn(storeMessages, message.type)) {
+    Promise.resolve().then(storeMessages[message.type]).then(sendResponse).catch(error => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
   if (message.type === "START_PICKER_TAB") {
     startPicker(message.tabId).then(() => sendResponse({ ok: true }))
       .catch(error => sendResponse({ ok: false, error: error.message }));
@@ -62,15 +82,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
   if (message.type === "SAVE_WATCH") {
-    saveWatch(message.watch).then(sendResponse);
+    saveWatch(message.watch).then(sendResponse).catch(error => sendResponse({ ok: false, error: error.message }));
     return true;
   }
   if (message.type === "REFRESH_ALL") {
-    refreshAll(true).then(sendResponse);
+    refreshAll(true).then(sendResponse).catch(error => sendResponse({ ok: false, error: error.message }));
     return true;
   }
   if (message.type === "REFRESH_ONE") {
-    refreshOne(message.id).then(sendResponse);
+    refreshOne(message.id).then(sendResponse).catch(error => sendResponse({ ok: false, error: error.message }));
     return true;
   }
 });
@@ -80,7 +100,7 @@ chrome.tabs.onRemoved.addListener(tabId => {
 });
 
 async function openWatchPicker(id) {
-  const { watches = [] } = await chrome.storage.local.get("watches");
+  const watches = await watchStore.getWatches();
   const watch = watches.find(w => w.id === id);
   if (!watch) throw new Error("商品已删除，请刷新列表");
   if (!/^https?:\/\//i.test(watch.url)) throw new Error("商品链接无效");
@@ -105,38 +125,14 @@ async function takePendingPicker(tabId) {
 }
 
 async function saveWatch(input) {
-  const { watches = [] } = await chrome.storage.local.get("watches");
-  const existingIndex = input.id ? watches.findIndex(w => w.id === input.id) : -1;
-  const existing = existingIndex >= 0 ? watches[existingIndex] : null;
-  const watch = {
-    ...existing,
-    id: existing?.id || crypto.randomUUID(),
-    title: existing?.customTitle ? existing.title : input.title || "未命名商品",
-    url: normalizeUrl(input.url),
-    selector: input.selector,
-    sample: input.sample || "",
-    targetPrice: Number(input.targetPrice),
-    currentPrice: Number(input.currentPrice),
-    currency: input.currency || "",
-    updatedAt: Date.now(),
-    createdAt: existing?.createdAt || Date.now(),
-    triggered: Number(input.currentPrice) <= Number(input.targetPrice),
-    status: "ok",
-    error: ""
-  };
-  watch.triggeredAt = watch.triggered
-    ? (existing?.triggered ? existing.triggeredAt || existing.updatedAt || watch.updatedAt : watch.updatedAt)
-    : null;
-  if (existingIndex >= 0) watches.splice(existingIndex, 1, watch);
-  else watches.unshift(watch);
-  await chrome.storage.local.set({ watches });
-  await updateBadge(watches);
+  const watch = await watchStore.saveWatch(input);
+  await updateBadge();
   return { ok: true, watch };
 }
 
 function refreshAll(interactive = false) {
   return queueRefresh(async () => {
-  const { watches = [] } = await chrome.storage.local.get("watches");
+  const watches = await watchStore.getWatches();
   const results = [];
   for (const watch of watches) results.push(await refreshWatch(watch.id, interactive));
   const failed = results.filter(result => !result.ok).length;
@@ -149,30 +145,21 @@ function refreshOne(id) {
 }
 
 async function refreshWatch(id, interactive) {
-  const { watches = [] } = await chrome.storage.local.get("watches");
-  const watch = watches.find(item => item.id === id);
-  if (!watch) return { ok: false };
+  const snapshot = await watchStore.getRefreshSnapshot(id);
+  if (!snapshot) return { ok: false, error: "商品已删除" };
+  const { watch, expected } = snapshot;
   // An installation alarm may run just after a successful manual refresh.
   if (!interactive && watch.status === "ok" && Date.now() - (watch.lastSuccessAt || 0) < 60000) {
     return { ok: true, watch };
   }
-  const originalUrl = watch.url, originalSelector = watch.selector;
-  const originalUpdatedAt = watch.updatedAt;
   await fetchPrice(watch, interactive);
-  // Merge into current storage instead of restoring the pre-request list.
-  const { watches: latest = [] } = await chrome.storage.local.get("watches");
-  const current = latest.find(item => item.id === id);
-  if (!current || current.url !== originalUrl || current.selector !== originalSelector || current.updatedAt !== originalUpdatedAt) {
+  const committed = await watchStore.commitPrice(id, expected, watch);
+  if (!committed) {
     return { ok: false, error: "商品已修改，请重新刷新" };
   }
-  for (const key of ["currentPrice", "sample", "currency", "updatedAt", "lastSuccessAt", "status", "error"]) {
-    if (key in watch) current[key] = watch[key];
-  }
-  current.triggered = Number(current.currentPrice) <= Number(current.targetPrice);
-  current.triggeredAt = current.triggered ? current.triggeredAt || watch.triggeredAt || Date.now() : null;
-  await chrome.storage.local.set({ watches: latest });
-  await updateBadge(latest);
-  return { ok: watch.status !== "error", error: watch.error, watch };
+  if (committed.notify) notify(committed.watch);
+  await updateBadge();
+  return { ok: watch.status !== "error", error: watch.error, watch: committed.watch };
 }
 
 async function fetchPrice(watch, interactive = false) {
@@ -192,7 +179,6 @@ async function fetchPrice(watch, interactive = false) {
     watch.triggeredAt = watch.triggered
       ? (wasTriggered ? previousTriggeredAt || watch.updatedAt : watch.updatedAt)
       : null;
-    if (watch.triggered && !wasTriggered && watch.notify !== false) notify(watch);
   } catch (error) {
     watch.status = "error";
     watch.error = String(error.message || error);
@@ -299,8 +285,8 @@ function notify(watch) {
 }
 
 async function updateBadge(provided) {
-  const watches = provided || (await chrome.storage.local.get("watches")).watches || [];
-  const count = watches.filter(w => w.triggered).length;
+  const watches = provided || await watchStore.getWatches();
+  const count = watches.filter(w => WatchState.isTriggered(w)).length;
   await chrome.action.setBadgeBackgroundColor({ color: "rgb(34, 197, 94)" });
   await chrome.action.setBadgeTextColor({ color: "#FFFFFF" });
   await chrome.action.setBadgeText({ text: count ? String(count) : "" });
