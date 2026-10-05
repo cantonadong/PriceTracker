@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "minimum_chrome_version": "116",
   "name": "价格守望",
-  "version": "1.0.0",
+  "version": "1.1",
   "description": "选择网页上的价格，按小时检查并在降到目标价时提醒。",
   "permissions": ["storage", "alarms", "tabs", "scripting", "offscreen", "notifications", "favicon"],
   "host_permissions": ["<all_urls>"],
@@ -12,7 +12,7 @@
   "options_page": "dashboard.html",
   "content_scripts": [{
     "matches": ["<all_urls>"],
-    "js": ["content.js"],
+    "js": ["price-reader.js", "content.js"],
     "css": ["content.css"],
     "run_at": "document_idle"
   }]

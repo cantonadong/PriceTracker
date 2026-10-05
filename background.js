@@ -1,3 +1,4 @@
+import "./price-reader.js";
 const ALARM = "price-watch-hourly";
 const OFFSCREEN_URL = "offscreen.html";
 let refreshQueue = Promise.resolve();
@@ -36,7 +37,7 @@ async function startPicker(tabId) {
   try {
     await chrome.tabs.sendMessage(tabId, { type: "START_PICKER" });
   } catch {
-    await chrome.scripting.executeScript({ target: { tabId }, files: ["content.js"] });
+    await chrome.scripting.executeScript({ target: { tabId }, files: ["price-reader.js", "content.js"] });
     await chrome.tabs.sendMessage(tabId, { type: "START_PICKER" });
   }
 }
@@ -110,7 +111,7 @@ async function saveWatch(input) {
   const watch = {
     ...existing,
     id: existing?.id || crypto.randomUUID(),
-    title: input.title || "未命名商品",
+    title: existing?.customTitle ? existing.title : input.title || "未命名商品",
     url: normalizeUrl(input.url),
     selector: input.selector,
     sample: input.sample || "",
@@ -207,14 +208,16 @@ async function readPrice(watch, interactive = false) {
       : `HTTP ${response.status}`);
     const html = await response.text();
     await ensureOffscreen();
-    const result = await chrome.runtime.sendMessage({ type: "PARSE_OFFSCREEN", html, selector: watch.selector });
+    const result = await chrome.runtime.sendMessage({ type: "PARSE_OFFSCREEN", html, selector: watch.selector, url: watch.url });
     if (!result?.ok || !Number.isFinite(result.price)) throw new Error(result?.error || "找不到价格元素");
     return result;
   } catch (error) {
+    if (interactive) return readPriceInBrowser(watch);
     // A normal product tab can contain prices unavailable to a background request.
     const tabs = await chrome.tabs.query({});
     for (const tab of tabs.filter(tab => tab.id && normalizeUrl(tab.url) === normalizeUrl(watch.url))) {
       try {
+        await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["price-reader.js"] });
         const results = await chrome.scripting.executeScript({
           target: { tabId: tab.id },
           func: readPagePrice,
@@ -224,7 +227,6 @@ async function readPrice(watch, interactive = false) {
         if (result?.ok && Number.isFinite(result.price)) return result;
       } catch { /* The tab may have closed or navigated; try another matching tab. */ }
     }
-    if (interactive) return readPriceInBrowser(watch);
     throw error;
   }
 }
@@ -235,6 +237,11 @@ async function readPriceInBrowser(watch) {
   let tab = tabs.find(tab => tab.id && normalizeUrl(tab.url) === normalizeUrl(watch.url));
   const created = !tab;
   if (!tab) tab = await chrome.tabs.create({ url: watch.url, active: false });
+  else {
+    // An existing tab may still show a promotion that has already ended.
+    await chrome.tabs.reload(tab.id, { bypassCache: true });
+    await new Promise(resolve => setTimeout(resolve, 1000));
+  }
   let result;
   for (let attempt = 0; attempt < 20; attempt++) {
     let current;
@@ -242,6 +249,7 @@ async function readPriceInBrowser(watch) {
     catch { throw new Error("商品页面已关闭，请重新点击刷新"); }
     if (current.status === "complete" && /^https?:/i.test(current.url || "")) {
       try {
+        await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["price-reader.js"] });
         const results = await chrome.scripting.executeScript({
           target: { tabId: tab.id }, func: readPagePrice,
           args: [watch.selector, normalizeUrl(watch.url)]
@@ -266,16 +274,8 @@ function readPagePrice(selector, expectedUrl) {
   const url = new URL(location.href);
   url.hash = "";
   if (url.href !== expectedUrl) return { ok: false };
-  const element = document.querySelector(selector);
-  if (!element) return { ok: false };
-  const text = element.textContent.trim();
-  const found = text.replace(/\s/g, "").match(/-?\d[\d.,]*/);
-  if (!found) return { ok: false };
-  let value = found[0];
-  value = value.lastIndexOf(",") > value.lastIndexOf(".")
-    ? value.replace(/\./g, "").replace(",", ".") : value.replace(/,/g, "");
-  const price = Number(value);
-  return { ok: Number.isFinite(price), price, text };
+  try { return globalThis.readProductPrice(document, selector, expectedUrl); }
+  catch (error) { return { ok: false, error: error.message }; }
 }
 
 async function ensureOffscreen() {
