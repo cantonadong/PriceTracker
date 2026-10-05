@@ -40,7 +40,7 @@ Chrome 同步空间约 100 KB，单项约 8 KB，最多 512 个键。标题、�
 powershell -NoProfile -ExecutionPolicy Bypass -File tools/package-sync.ps1
 ```
 
-脚本只生成一个 `PriceTracker-1.1-sync.zip`，原样保留 manifest 中的固定身份，并检查 ID。包内只包含运行文件、图标和 README。
+脚本只生成一个 `PriceTracker-1.2-sync.zip`，原样保留 manifest 中的固定身份，并检查 ID。包内只包含运行文件、图标和 README。
 
 ## 用户验收
 
