@@ -16,3 +16,12 @@
 - Final: Ruling: malformed backup coercion reclassified Important because it can alter notification and custom-title settings; strict present-field validation added, missing optional fields retain documented defaults. Actual import behavior remains for user verification.
 - Final: Ruling: reviewer declined runtime cloud delivery, worker lifecycle, real quota failures and browser interactions because tests are forbidden; these remain explicitly unverified. ZIP manifests and generated identity are checked statically.
 - Final verification: node --check on every root JavaScript file and git diff --check passed; no tests executed. No push or release requested for this change.
+
+## 用户要求修正：无主动操作的后台同步
+
+- 用户明确拒绝导入导出迁移流程，要求自动后台同步，优先于原计划。
+- 当前 CentBrowser 的 Secure Preferences 中，安装路径为 D:\Dev\PriceTracker，ID 为 ljbffjpoegfcdkmacohmgagkbijmhoel，无 key。
+- 对照 Chromium 的 GenerateIdForPath 与 ParsePEMKeyBytes：固定路径 UTF-16LE 字节作为 manifest key，计算结果与已安装 ID 完全一致；不修改浏览器配置和 storage。
+- 取消随机 RSA 身份、更换 ID 的双包方案和导入导出 UI/API；正常隐藏同步提示，失败时显示。本机旧列表仍由 initialize 自动接入同步。
+- 新收到的未知价格商品自动后台抓价；保持原本每小时刷新任务。
+- 单一更新包覆盖原 sync.zip，避免旧链接继续指向错误身份。没有运行测试，仍需用户核实跨设备同步。

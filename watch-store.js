@@ -380,56 +380,6 @@ export async function flushSync() {
   });
 }
 
-export function exportBackup() {
-  return transact(ctx => ({ schemaVersion: 1, exportedAt: Date.now(), watches: structuredClone(ctx.watches), order: ctx.watches.map(watch => watch.id) }));
-}
-
-function validateBackup(value) {
-  if (encodedSize("", value) > 5 * 1024 * 1024) throw new Error("导入文件不能超过 5 MB");
-  if (value?.schemaVersion !== 1 || !Array.isArray(value.watches) || !Array.isArray(value.order)) throw new Error("不是有效的监控列表备份");
-  const ids = new Set();
-  const watches = value.watches.map(watch => {
-    const id = validateId(watch?.id);
-    if (ids.has(id)) throw new Error("备份包含重复商品 ID");
-    ids.add(id);
-    const config = configuration(watch);
-    if (!Number.isFinite(watch.createdAt) || watch.createdAt < 0) throw new Error("备份的商品创建时间无效");
-    if (watch.currentPrice != null && (typeof watch.currentPrice !== "number" || !Number.isFinite(watch.currentPrice))) throw new Error("备份的当前价格必须是有效数字或 null");
-    if (watch.updatedAt !== undefined && (typeof watch.updatedAt !== "number" || !Number.isFinite(watch.updatedAt) || watch.updatedAt < 0)) throw new Error("备份的价格更新时间无效");
-    for (const key of ["currency", "sample"]) {
-      if (watch[key] !== undefined && typeof watch[key] !== "string") throw new Error("备份的价格文本字段无效");
-    }
-    return { id, createdAt: watch.createdAt, ...config.title, ...config.source, targetPrice: config.target, notify: config.notify,
-      currentPrice: WatchState.hasPrice(watch) ? Number(watch.currentPrice) : null,
-      currency: typeof watch.currency === "string" ? watch.currency : "", sample: typeof watch.sample === "string" ? watch.sample : "",
-      updatedAt: Number.isFinite(watch.updatedAt) && watch.updatedAt >= 0 ? watch.updatedAt : 0, status: WatchState.hasPrice(watch) ? "ok" : "pending", error: "" };
-  });
-  const order = value.order.map(validateId);
-  if (new Set(order).size !== order.length || order.some(id => !ids.has(id))) throw new Error("备份的排序与商品不匹配");
-  return { watches, order };
-}
-
-export function importBackup(value) {
-  // Validate the entire file before any mutation; a bad row cannot half-import.
-  const backup = validateBackup(value);
-  return transact(ctx => {
-    let imported = 0;
-    for (const watch of backup.watches) {
-      const existing = ctx.state.records[watch.id];
-      if (existing?.deleted) continue;
-      if (existing) patchRecord(ctx, watch.id, { title: watch.title, customTitle: watch.customTitle, url: watch.url, selector: watch.selector, targetPrice: watch.targetPrice, notify: watch.notify });
-      else {
-        ctx.state.records[watch.id] = createRecord(watch, stamp(ctx.state));
-        ctx.watches.push(watch);
-        markChanged(ctx, WATCH_PREFIX + watch.id);
-      }
-      imported++;
-    }
-    setOrderInContext(ctx, backup.order);
-    return { imported };
-  });
-}
-
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== "sync" || !Object.keys(changes).some(key => key === ORDER_KEY || key.startsWith(WATCH_PREFIX))) return;
   initialize().then(() => serial(async () => {

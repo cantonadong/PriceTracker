@@ -4,6 +4,7 @@ import * as watchStore from "./watch-store.js";
 const ALARM = "price-watch-hourly";
 const OFFSCREEN_URL = "offscreen.html";
 let refreshQueue = Promise.resolve();
+const pendingBackgroundRefreshes = new Set();
 watchStore.initialize().catch(reportBackgroundError);
 
 function reportBackgroundError(error) {
@@ -50,7 +51,18 @@ async function startPicker(tabId) {
 
 chrome.notifications.onClicked.addListener(() => openDashboard());
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === "local" && changes.watches) updateBadge(changes.watches.newValue || []).catch(reportBackgroundError);
+  if (area !== "local" || !changes.watches) return;
+  const watches = changes.watches.newValue || [];
+  updateBadge(watches).catch(reportBackgroundError);
+  // Synced rows acquire this device's price without asking the user to refresh.
+  for (const watch of watches) {
+    if (watch.status !== "pending" || WatchState.hasPrice(watch) || pendingBackgroundRefreshes.has(watch.id)) continue;
+    pendingBackgroundRefreshes.add(watch.id);
+    queueRefresh(async () => {
+      try { return await refreshWatch(watch.id, false); }
+      finally { pendingBackgroundRefreshes.delete(watch.id); }
+    }).catch(reportBackgroundError);
+  }
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -60,9 +72,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     WATCH_PATCH: () => watchStore.patchWatch(message.id, message.patch).then(saved => ({ ok: true, saved })),
     WATCH_DELETE: () => watchStore.deleteWatch(message.id).then(removed => ({ ok: true, removed })),
     WATCH_ORDER: () => watchStore.setOrder(message.ids).then(() => ({ ok: true })),
-    WATCH_SORT: () => watchStore.sortByPrice().then(() => ({ ok: true })),
-    WATCH_EXPORT: () => watchStore.exportBackup().then(backup => ({ ok: true, backup })),
-    WATCH_IMPORT: () => watchStore.importBackup(message.backup).then(result => ({ ok: true, ...result }))
+    WATCH_SORT: () => watchStore.sortByPrice().then(() => ({ ok: true }))
   };
   if (Object.hasOwn(storeMessages, message.type)) {
     Promise.resolve().then(storeMessages[message.type]).then(sendResponse).catch(error => sendResponse({ ok: false, error: error.message }));

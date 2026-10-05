@@ -51,9 +51,9 @@ async function render() {
   if (!list.querySelector(".dragging")) draw();
 }
 function showSyncStatus(value) {
-  const labels = { written: "已写入浏览器同步存储", pending: "有更改待写入", error: "写入失败" };
-  syncLabel.textContent = `浏览器同步：${labels[value?.state] || "正在初始化"}${value?.state === "error" && value.message ? `（${value.message}）` : ""}`;
-  syncLabel.classList.toggle("sync-error", value?.state === "error");
+  const failed = value?.state === "error";
+  syncLabel.closest(".sync-footer").hidden = !failed;
+  syncLabel.textContent = failed ? `后台同步暂未完成，列表保留在本机：${value.message || "稍后自动重试"}` : "";
 }
 function draw() {
   const focused = document.activeElement, restoreFocus = focused?.classList.contains("title-input");
@@ -141,26 +141,6 @@ document.querySelector("#edit-form").onsubmit = async e => {
 document.querySelector("#modal-delete").onclick = async () => { const w = allWatches.find(x => x.id === editingId); try { if (w && await removeWithConfirm(w)) closeEdit(); } catch (error) { showError(error); } };
 async function removeWithConfirm(w) { if (!confirm(`删除“${w.title}”的跟踪？`)) return false; const result = await command("WATCH_DELETE", { id: w.id }); toast(result.removed ? "商品已删除" : "商品已被删除"); return true; }
 
-document.querySelector("#export-list").onclick = async e => {
-  const button = e.currentTarget; button.disabled = true;
-  try {
-    const { backup } = await command("WATCH_EXPORT");
-    const url = URL.createObjectURL(new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" }));
-    const link = document.createElement("a"); link.href = url; link.download = `PriceTracker-list-${new Date().toISOString().slice(0, 10)}.json`;
-    document.body.append(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 10000); toast("列表备份已生成");
-  } catch (error) { showError(error); } finally { button.disabled = false; }
-};
-const importButton = document.querySelector("#import-list"), importFile = document.querySelector("#import-file");
-importButton.onclick = () => importFile.click();
-importFile.onchange = async () => {
-  const file = importFile.files[0]; if (!file) return;
-  importButton.disabled = true;
-  try {
-    if (file.size > 5 * 1024 * 1024) throw new Error("导入文件不能超过 5 MB");
-    let backup; try { backup = JSON.parse(await file.text()); } catch { throw new Error("备份文件不是有效的 JSON"); }
-    const result = await command("WATCH_IMPORT", { backup }); await render(); toast(`已导入 ${result.imported} 个监控商品`);
-  } catch (error) { showError(error); } finally { importButton.disabled = false; importFile.value = ""; }
-};
 function displayTitle(w) { return w.customTitle ? w.title : productTitle(w.title); }
 function money(w) { return WatchState.hasPrice(w) ? Number(w.currentPrice).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "—"; }
 function safeDomain(url) { try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return url; } }
