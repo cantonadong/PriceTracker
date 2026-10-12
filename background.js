@@ -223,11 +223,16 @@ async function readPrice(watch, interactive = false) {
         if (result?.ok && Number.isFinite(result.price)) return result;
       } catch { /* The tab may have closed or navigated; try another matching tab. */ }
     }
+    // Repco blocks anonymous background requests; render the product in a
+    // normal browser tab even for scheduled refreshes when no open tab works.
+    if (/(^|\.)repco\.co\.nz$/i.test(new URL(watch.url).hostname)) {
+      return readPriceInBrowser(watch, true);
+    }
     throw error;
   }
 }
 
-async function readPriceInBrowser(watch) {
+async function readPriceInBrowser(watch, automatic = false) {
   if (!/^https?:\/\//i.test(watch.url)) throw new Error("商品链接无效");
   const tabs = await chrome.tabs.query({});
   let tab = tabs.find(tab => tab.id && normalizeUrl(tab.url) === normalizeUrl(watch.url));
@@ -262,6 +267,12 @@ async function readPriceInBrowser(watch) {
       } catch { /* Wait for navigation or dynamic price rendering to finish. */ }
     }
     await new Promise(resolve => setTimeout(resolve, 1000));
+  }
+  if (automatic && created) {
+    const latest = await chrome.tabs.get(tab.id).catch(() => null);
+    if (latest && !latest.active && normalizeUrl(latest.url) === normalizeUrl(watch.url)) {
+      await chrome.tabs.remove(tab.id).catch(() => {});
+    }
   }
   throw new Error("已尝试从商品页面读取价格但未成功。请查看已打开的商品页：如需登录或验证，请完成后刷新；若价格已正常显示，请点击修改重新选择价格区域");
 }

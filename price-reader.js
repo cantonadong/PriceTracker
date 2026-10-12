@@ -10,6 +10,36 @@ function readProductPrice(doc, selector, pageUrl) {
   }
   let element;
   const url = new URL(pageUrl);
+  if (/(^|\.)repco\.co\.nz$/i.test(url.hostname) && /\/p\/[^/]+\/?$/.test(url.pathname) && typeof selector === "string") {
+    const code = url.pathname.match(/\/p\/([^/]+)\/?$/)[1];
+    // Match the requested product, not related products or a site's price range.
+    function productPrice(value) {
+      if (!value || typeof value !== "object") return null;
+      if (Array.isArray(value)) {
+        for (const item of value) { const result = productPrice(item); if (result) return result; }
+        return null;
+      }
+      const types = Array.isArray(value["@type"]) ? value["@type"] : [value["@type"]];
+      let sameProduct = String(value.sku || value.productID || "") === code;
+      try { sameProduct ||= new URL(value.url || value["@id"], url).pathname.replace(/\/$/, "") === url.pathname.replace(/\/$/, ""); } catch { /* No product URL. */ }
+      if (types.includes("Product") && sameProduct) {
+        const offers = Array.isArray(value.offers) ? value.offers : [value.offers];
+        for (const offer of offers) {
+          const raw = offer?.price;
+          if ((typeof raw !== "string" && typeof raw !== "number") || String(raw).trim() === "") continue;
+          const price = Number(String(raw).replace(/,/g, ""));
+          if (Number.isFinite(price) && price >= 0 && (!offer.priceCurrency || offer.priceCurrency === "NZD")) {
+            return { ok: true, price, text: `NZ$${price}` };
+          }
+        }
+      }
+      return productPrice(value["@graph"]);
+    }
+    for (const script of doc.querySelectorAll('script[type="application/ld+json"]')) {
+      try { const result = productPrice(JSON.parse(script.textContent)); if (result) return result; }
+      catch { /* Invalid structured data must not prevent the saved selector fallback. */ }
+    }
+  }
   if (/(^|\.)thewarehouse\.co\.nz$/i.test(url.hostname) && /^\/p\//.test(url.pathname)) {
     // Promotion markup changes the saved CSS path. Read the main product's
     // price, never recommendation cards or delivery charges.
